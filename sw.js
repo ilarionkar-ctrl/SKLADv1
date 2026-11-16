@@ -1,5 +1,5 @@
 // Кэширует оболочку приложения, чтобы оно открывалось без сети. Запросы к API не кэшируются.
-const CACHE = 'sklad-v1';
+const CACHE = 'sklad-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'xlsx.js', 'config.js', 'vendor/qrcode.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
