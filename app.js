@@ -15,7 +15,8 @@
   const fmtQty = n => round3(n).toString().replace('.', ',');
   const cmp = (a, b) => String(a).localeCompare(String(b), 'ru');
   const uid = () => 'D' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  const DIR = { in: 'Производство → Склад', out: 'Склад → Производство' };
+  const DIR = { in: 'Производство → Склад', out: 'Склад → Производство', zone: 'Между ларями' };
+  const SURNAME_RE = /^[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё' -]{1,59}$/;
   const CFG_URL = (window.APP_CONFIG && window.APP_CONFIG.API_URL) || '';
 
   /* ───────── состояние ───────── */
@@ -115,7 +116,7 @@
   });
 
   /* ───────── экраны ───────── */
-  const docPills = d => (d.mode === 'move' ? `<span class="pill ${d.direction}">${DIR[d.direction]}</span>` : '<span class="pill">Инвентаризация</span>') + `<span class="pill">${esc(d.zone)}</span>`;
+  const docPills = d => (d.mode === 'move' ? `<span class="pill ${d.direction}">${DIR[d.direction]}</span>` : '<span class="pill">Инвентаризация</span>') + `<span class="pill">${esc(d.direction === 'zone' ? d.zone + ' → ' + d.zoneTo : d.zone)}</span>`;
   const zoneOptions = sel => '<option value="">— выберите —</option>' + S.zones.map(z => `<option value="${esc(z.name)}"${z.name === sel ? ' selected' : ''}>${esc(z.name)}</option>`).join('');
   const expectedInZone = zone => S.items.filter(i => stockOf(i.article, zone) > 0.0004).sort((a, b) => cmp(a.name, b.name));
 
@@ -142,8 +143,9 @@
   function vSetup() {
     const inv = S.setup.mode === 'inventory', dir = S.setup.direction;
     return top(inv ? 'Инвентаризация' : 'Перемещение', true) + `<main><div class="card col">
-      ${inv ? '' : `<div class="seg"><button class="in${dir === 'in' ? ' on' : ''}" data-act="dir" data-v="in">Производство<br>→ Склад</button><button class="out${dir === 'out' ? ' on' : ''}" data-act="dir" data-v="out">Склад<br>→ Производство</button></div>`}
-      <label class="f">${inv ? 'Зона хранения' : 'Место хранения на складе'}<select id="f-zone">${zoneOptions(S.setup.zone)}</select></label>
+      ${inv ? '' : `<div class="seg"><button class="in${dir === 'in' ? ' on' : ''}" data-act="dir" data-v="in">Производство<br>→ Склад</button><button class="out${dir === 'out' ? ' on' : ''}" data-act="dir" data-v="out">Склад<br>→ Производство</button><button class="zone zn${dir === 'zone' ? ' on' : ''}" data-act="dir" data-v="zone">Между ларями</button></div>`}
+      <label class="f">${inv ? 'Зона хранения' : dir === 'zone' ? 'Из ларя (откуда)' : 'Место хранения на складе'}<select id="f-zone">${zoneOptions(S.setup.zone)}</select></label>
+      ${dir === 'zone' ? `<label class="f">В ларь (куда)<select id="f-zone2">${zoneOptions(S.setup.zoneTo)}</select></label>` : ''}
       <div id="zone-owner" class="muted"></div>
       ${inv ? `<label class="chk"><input type="checkbox" id="f-apply"${S.setup.apply ? ' checked' : ''}> Скорректировать остатки по факту</label>
         <div class="muted">Если включено, после отправки остаток в этой зоне станет равен подсчитанному. Если выключено — документ только фиксируется в журнале и Excel.</div>` : ''}
@@ -236,7 +238,7 @@
   function vSettings() {
     const bad = S.queue.some(x => x.error), u = S.user;
     const queue = S.queue.map((d, i) => `<div class="li"><div class="n"><b>${d.type === 'move' ? 'Перемещение' : 'Инвентаризация'} · ${d.lines.length} поз.</b>
-      <span class="muted">${fmtDate(d.created)} · ${esc(d.zone)}${d.error ? `<br><span class="err">${esc(d.error)}</span>` : ''}</span></div>
+      <span class="muted">${fmtDate(d.created)} · ${esc(d.direction === 'zone' ? d.zone + ' → ' + d.zoneTo : d.zone)}${d.error ? `<br><span class="err">${esc(d.error)}</span>` : ''}</span></div>
       ${d.error ? `<button class="btn sm danger" data-act="q-del" data-i="${i}">Удалить</button>` : ''}</div>`).join('');
     return top('Настройки', true) + `<main>
       <div class="card col"><b>Очередь отправки</b>${queue || '<span class="muted">Пусто</span>'}
@@ -412,7 +414,7 @@
     pauseScan();
     const d = S.doc, inv = d.mode === 'inventory';
     const inZone = `${fmtQty(stockOf(item.article, d.zone))} ${esc(item.unit)}`;
-    const note = inv ? ` · по учёту в зоне: ${inZone}` : d.direction === 'out' ? ` · в зоне: ${inZone}` : '';
+    const note = inv ? ` · по учёту в зоне: ${inZone}` : d.direction !== 'in' ? ` · в зоне: ${inZone}` : '';
     const keys = ['7', '8', '9', '÷', '4', '5', '6', '×', '1', '2', '3', '−', '0', ',', '⌫', '+']
       .map(k => `<button data-k="${k}"${/[÷×−+]/.test(k) ? ' class="op"' : ''}>${k}</button>`).join('');
     const o = overlay(`<h2>${esc(item.name)}</h2><div class="muted">${esc(item.article)}${note}</div>
@@ -451,14 +453,14 @@
   }
 
   /* ───────── отправка документа ───────── */
-  function buildInventoryXlsx(d, lines) {
+  function buildInventoryXlsx(d, lines, surname) {
     const agg = {};
     lines.forEach(l => { agg[l.article] = (agg[l.article] || 0) + l.qty; });
     const arr = Object.keys(agg).map(a => { const it = itemBy(a) || { name: a, unit: '' }; return { article: a, name: it.name, unit: it.unit, plan: stockOf(a, d.zone), fact: round3(agg[a]) }; })
       .sort((a, b) => cmp(a.name, b.name));
     const z = S.zones.find(z => z.name === d.zone);
     const head = ['№', 'Артикул', 'Наименование', 'Ед. изм.', 'По учёту', 'Фактически', 'Расхождение'].map(h => ({ v: h, s: 2 }));
-    const rows = [[{ v: 'Инвентаризация склада', s: 1 }], ['Дата', fmtDate(Date.now())], ['Автор', S.user.name],
+    const rows = [[{ v: 'Инвентаризация склада', s: 1 }], ['Дата', fmtDate(Date.now())], ['Автор', S.user.name], ['Составил (фамилия)', surname],
       ['Зона хранения', d.zone + (z && z.owner ? ` (отв.: ${z.owner})` : '')], [], head];
     arr.forEach((r, i) => rows.push([i + 1, r.article, r.name, r.unit, { v: r.plan, s: 3 }, { v: r.fact, s: 3 }, { v: round3(r.fact - r.plan), s: 3 }]));
     return makeXlsx({ name: 'Инвентаризация', rows, widths: [5, 12, 42, 10, 12, 12, 14] });
@@ -470,14 +472,34 @@
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
   }
 
+  /** Запрашивает фамилию вручную; без корректной фамилии возвращает null и документ не отправляется. */
+  const askSurname = () => new Promise(resolve => {
+    const o = overlay(`<h2>Кто оформил документ?</h2>
+      <label class="f">Фамилия (введите вручную)<input type="text" id="s-name" autocomplete="off" autocapitalize="words"></label>
+      <div class="err" id="s-err"></div>
+      <button class="btn" data-s="ok">Отправить документ</button><button class="btn danger" data-s="cancel">Отмена</button>`);
+    const inp = $('#s-name');
+    setTimeout(() => inp.focus(), 60);
+    const ok = () => {
+      const v = inp.value.trim().replace(/\s+/g, ' ');
+      if (!SURNAME_RE.test(v)) { $('#s-err').textContent = 'Введите фамилию буквами (не короче 2 символов)'; return; }
+      closeOverlay(); resolve(v);
+    };
+    o.onclick = e => {
+      const b = e.target.closest('[data-s]'); if (!b) return;
+      if (b.dataset.s === 'ok') ok(); else { closeOverlay(); resolve(null); }
+    };
+    inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ok(); } };
+  });
+
   function sendDoc() {
     const d = S.doc; if (!d || !d.lines.length) return;
-    const submit = lines => {
+    const submit = (lines, surname) => {
       if (d.mode === 'inventory') {
         const t = new Date(), zone = translit(d.zone).replace(/[^\w]+/g, '_').replace(/^_|_$/g, '');
-        download(buildInventoryXlsx(d, lines), `Inventarizatsiya_${zone}_${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}.xlsx`);
+        download(buildInventoryXlsx(d, lines, surname),`Inventarizatsiya_${zone}_${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}_${pad(t.getHours())}${pad(t.getMinutes())}.xlsx`);
       }
-      S.queue.push({ docId: d.id, type: d.mode, direction: d.direction, zone: d.zone, apply: !!d.apply, created: Date.now(), lines: lines.map(l => ({ article: l.article, qty: l.qty })) });
+      S.queue.push({ docId: d.id, type: d.mode, direction: d.direction, zone: d.zone, zoneTo: d.zoneTo || '', apply: !!d.apply, surname, created: Date.now(), lines: lines.map(l => ({ article: l.article, qty: l.qty })) });
       saveQueue(); S.doc = null; saveDraft(); go('menu'); toast('Отправляем…');
       syncQueue().then(r => {
         if (S.screen === 'menu') render();
@@ -487,22 +509,27 @@
         toast(S.queue.length ? 'Нет связи: документ сохранён и уйдёт позже' : 'Документ отправлен, остатки обновлены');
       });
     };
-    if (d.mode !== 'inventory') return submit(d.lines);
+    const finish = lines => askSurname().then(s => { if (s) submit(lines, s); });
+    if (d.mode !== 'inventory') return finish(d.lines);
     const counted = new Set(d.lines.map(l => l.article));
     const left = expectedInZone(d.zone).filter(i => !counted.has(i.article));
-    if (!left.length) return submit(d.lines);
+    if (!left.length) return finish(d.lines);
     dialog({ title: `Не посчитано: ${left.length}`, html: `<div class="muted">${left.slice(0, 12).map(i => esc(i.name)).join(', ')}${left.length > 12 ? '…' : ''}</div><p>Считать непосчитанные позиции нулевыми?</p>` },
       [{ label: 'Да, остаток 0', value: 'zero' }, { label: 'Нет, только посчитанные', cls: 'sec', value: 'skip' }, { label: 'Вернуться к подсчёту', cls: 'danger', value: 'back' }]).then(a => {
-      if (a !== 'back') submit(a === 'zero' ? d.lines.concat(left.map(i => ({ article: i.article, qty: 0, at: Date.now() }))) : d.lines);
+      if (a !== 'back') finish(a === 'zero' ? d.lines.concat(left.map(i => ({ article: i.article, qty: 0, at: Date.now() }))) : d.lines);
     });
   }
 
   function beginDoc() {
     const st = S.setup, ap = $('#f-apply');
     st.zone = $('#f-zone').value; if (ap) st.apply = ap.checked;
-    if (!st.zone) { S.err = 'Выберите место хранения'; return render(); }
+    const z2 = $('#f-zone2'), tr = st.mode === 'move' && st.direction === 'zone';
+    st.zoneTo = tr && z2 ? z2.value : '';
+    if (!st.zone) { S.err = tr ? 'Выберите ларь, откуда перемещаем' : 'Выберите место хранения'; return render(); }
+    if (tr && !st.zoneTo) { S.err = 'Выберите ларь, куда перемещаем'; return render(); }
+    if (tr && st.zoneTo === st.zone) { S.err = 'Ларь-источник и ларь-получатель должны различаться'; return render(); }
     if (S.doc && S.doc.lines.length && !confirm('Есть неотправленный черновик. Заменить его новым документом?')) return go('menu');
-    S.doc = { id: uid(), mode: st.mode, direction: st.mode === 'move' ? st.direction : null, zone: st.zone, apply: !!st.apply, lines: [] };
+    S.doc = { id: uid(), mode: st.mode, direction: st.mode === 'move' ? st.direction : null, zone: st.zone, zoneTo: st.zoneTo || '', apply: !!st.apply, lines: [] };
     saveDraft(); go('scan', { scanMode: 'doc' });
   }
 
@@ -554,7 +581,7 @@
       case 'start-move': S.setup = { mode: 'move', direction: 'in', zone: '' }; return go('setup');
       case 'start-inv': S.setup = { mode: 'inventory', zone: '', apply: false }; return go('setup');
       case 'resume': return go(S.doc.lines.length ? 'doc' : 'scan', { scanMode: 'doc' });
-      case 'dir': S.setup.direction = el.dataset.v; S.setup.zone = $('#f-zone').value; return render();
+      case 'dir': { S.setup.direction = el.dataset.v; S.setup.zone = $('#f-zone').value; const z2 = $('#f-zone2'); if (z2) S.setup.zoneTo = z2.value; return render(); }
       case 'begin': return beginDoc();
       case 'torch': return toggleTorch();
       case 'search': pauseScan(); return pickItem('Найти позицию', true, it => lineForm(it), resumeScan);
@@ -590,6 +617,7 @@
       $('#zone-owner').textContent = z && z.owner ? 'Ответственный: ' + z.owner : '';
     }
     if (t.classList.contains('selbox')) S.sel[t.dataset.a] = t.checked;
+    if (t.id === 'f-zone2') S.setup.zoneTo = t.value;
     if (t.id === 'f-cat') { S.cat = t.value; render(); }
     if (t.id === 'f-nz') { S.nz = t.checked; render(); }
   });

@@ -7,6 +7,7 @@
   :root{--bg:#141a15;--card:#1d261f;--ink:#eef2ea;--mute:#9aa596;--line:#2f3b31;--brand:#4aa874;--brand-ink:#06150c;--accent:#ee8a55;--in:#4aa874;--out:#ee8a55;--bad:#ff8a7a;--warn:#f0b955;--ok:#6fd09a}
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:17px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);overscroll-behavior:none}
@@ -20,6 +21,7 @@ button,input,select{font:inherit;color:inherit}
 .badge.off{background:#ffd9a8;color:#5a3300}
 main{flex:1;padding:16px;display:flex;flex-direction:column;gap:14px;max-width:640px;width:100%;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.col{display:flex;flex-direction:column;gap:12px}
 .muted{color:var(--mute);font-size:14px}
 .btn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:58px;padding:0 18px;border-radius:var(--r);border:2px solid var(--brand);background:var(--brand);color:var(--brand-ink);font-weight:650;font-size:18px;width:100%;cursor:pointer}
 .btn.sec{background:transparent;color:var(--brand)}
@@ -36,11 +38,13 @@ main{flex:1;padding:16px;display:flex;flex-direction:column;gap:14px;max-width:6
 label.f{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--mute)}
 input[type=text],input[type=password],input[type=search],input[type=number],select{width:100%;min-height:54px;padding:0 14px;border-radius:14px;border:2px solid var(--line);background:var(--card);color:var(--ink);font-size:19px}
 input:focus,select:focus{outline:0;border-color:var(--brand)}
-.seg{display:flex;gap:10px}
+.seg{display:flex;flex-wrap:wrap;gap:10px}
 .seg button{flex:1;min-height:76px;border-radius:var(--r);border:3px solid var(--line);background:var(--card);font-weight:700;font-size:17px;line-height:1.2;padding:8px}
 .seg button.on.in{border-color:var(--in);background:var(--in);color:var(--brand-ink)}
 .seg button.on.out{border-color:var(--out);background:var(--out);color:#fff}
-.chk{display:flex;align-items:center;gap:12px;font-size:17px}.chk input{width:26px;height:26px}
+.seg button.zn{flex-basis:100%;min-height:60px}
+.seg button.on.zone{border-color:var(--accent);background:var(--accent);color:#fff}
+.chk{display:flex;align-items:center;gap:12px;font-size:17px}.chk input,.selbox{width:26px;height:26px}
 /* scan */
 .scan{position:relative;background:#000;border-radius:var(--r);overflow:hidden;aspect-ratio:3/4;max-height:56vh;width:100%}
 .scan video{width:100%;height:100%;object-fit:cover}
@@ -51,6 +55,7 @@ input:focus,select:focus{outline:0;border-color:var(--brand)}
 .ctx{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .pill{padding:6px 12px;border-radius:99px;font-size:14px;font-weight:650;background:var(--card);border:1px solid var(--line)}
 .pill.in{background:var(--in);color:var(--brand-ink);border-color:var(--in)}.pill.out{background:var(--out);color:#fff;border-color:var(--out)}
+.pill.zone{background:var(--accent);color:#fff;border-color:var(--accent)}
 /* lists */
 .list{display:flex;flex-direction:column}
 .li{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
@@ -70,7 +75,6 @@ input:focus,select:focus{outline:0;border-color:var(--brand)}
 .keys{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .keys button{min-height:56px;border-radius:14px;border:1px solid var(--line);background:var(--card);font-size:22px;font-weight:600}
 .keys .op{background:var(--line)}.keys .eq{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
-.big{font-size:30px;text-align:right;font-weight:700}
 #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:30;background:#222;color:#fff;padding:12px 18px;border-radius:14px;max-width:90%;display:none;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.3)}
 #toast.on{display:block}#toast.bad{background:var(--bad);color:#fff}
 .err{color:var(--bad);font-size:15px}
