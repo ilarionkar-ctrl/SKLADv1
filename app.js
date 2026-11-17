@@ -33,6 +33,9 @@
   const saveCache = () => LS.set('cache', { items: S.items, zones: S.zones, stock: S.stock, sheetUrl: S.sheetUrl, synced: S.synced });
   const saveQueue = () => LS.set('queue', S.queue);
   const saveDraft = () => S.doc ? LS.set('draft', S.doc) : LS.del('draft');
+  /** Роль: повар (перемещения и остатки), кладовщик (всё, кроме таблицы), админ (всё). Неизвестная роль = повар. */
+  const role = () => { const r = String((S.user && S.user.role) || '').toLowerCase(); return r === 'админ' || r === 'кладовщик' ? r : 'повар'; };
+  const isKeeper = () => role() !== 'повар';
   const itemBy = article => S.items.find(i => i.article === article);
   const stockOf = (article, zone) => { const s = S.stock[article]; return !s ? 0 : zone ? (s.z[zone] || 0) : s.t; };
   const matches = (i, q) => !q || i.name.toLowerCase().includes(q) || i.article.toLowerCase().includes(q);
@@ -132,11 +135,11 @@
     const q = S.queue.length, d = S.doc;
     return top('Склад · ' + (S.user ? S.user.name : '')) + `<main><div class="tiles">
       <button class="tile t1" data-act="start-move">Сканировать QR<small>Перемещение полуфабрикатов</small></button>
-      <button class="tile t2" data-act="start-inv">Инвентаризация<small>Подсчёт и Excel</small></button>
+      ${isKeeper() ? '<button class="tile t2" data-act="start-inv">Инвентаризация<small>Подсчёт и Excel</small></button>' : ''}
       <button class="tile t3" data-act="stock">Остатки<small>${S.synced ? 'обновлено ' + fmtDate(S.synced) : 'нет данных'}</small></button>
-      <button class="tile t5" data-act="qr">QR-коды<small>Привязка и печать</small></button>
-      <button class="tile t4" data-act="settings">Настройки<small>Очередь, этикетки</small></button></div>
-      ${d ? `<button class="btn sec" data-act="resume">Продолжить черновик: ${d.mode === 'move' ? 'перемещение' : 'инвентаризация'} (${d.lines.length})</button>` : ''}
+      ${isKeeper() ? '<button class="tile t5" data-act="qr">QR-коды<small>Привязка и печать</small></button>' : ''}
+      <button class="tile t4" data-act="settings">Настройки<small>Очередь${isKeeper() ? ', этикетки' : ''}</small></button></div>
+      ${d && (d.mode !== 'inventory' || isKeeper()) ? `<button class="btn sec" data-act="resume">Продолжить черновик: ${d.mode === 'move' ? 'перемещение' : 'инвентаризация'} (${d.lines.length})</button>` : ''}
       ${q ? `<div class="card muted">Неотправленных документов: ${q}. Они уйдут автоматически при появлении связи.</div>` : ''}</main>`;
   }
 
@@ -196,7 +199,7 @@
   }
 
   const NO_CAT = '__none';
-  const canOpenSheet = () => !!S.sheetUrl && !!S.user && String(S.user.role).toLowerCase() !== 'повар';
+  const canOpenSheet = () => !!S.sheetUrl && role() === 'админ';
   function vStock() {
     const q = S.q.toLowerCase();
     const cats = [...new Set(S.items.map(i => i.category).filter(Boolean))].sort(cmp);
@@ -243,9 +246,9 @@
     return top('Настройки', true) + `<main>
       <div class="card col"><b>Очередь отправки</b>${queue || '<span class="muted">Пусто</span>'}
         ${S.queue.length ? `<button class="btn sec" data-act="q-retry">${bad ? 'Повторить отправку' : 'Отправить сейчас'}</button>` : ''}</div>
-      <div class="card col"><b>Этикетка, мм</b><div class="row">
+      ${isKeeper() ? `<div class="card col"><b>Этикетка, мм</b><div class="row">
         <label class="f">Ширина<input type="number" id="f-lw" inputmode="numeric" value="${S.label.w}"></label>
-        <label class="f">Высота<input type="number" id="f-lh" inputmode="numeric" value="${S.label.h}"></label></div></div>
+        <label class="f">Высота<input type="number" id="f-lh" inputmode="numeric" value="${S.label.h}"></label></div></div>` : ''}
       <div class="muted">Пользователь: ${esc(u ? u.name : '')} (${esc(u ? u.role : '')})</div>
       <button class="btn danger" data-act="logout">Выйти</button></main>`;
   }
@@ -346,8 +349,8 @@
   }
   function unknownCode(code) {
     const o = overlay(`<h2>Код не найден</h2><div class="muted" style="overflow-wrap:anywhere">${esc(code)}</div>
-      <button class="btn" data-u="bind">Привязать к позиции из справочника</button>
-      <button class="btn sec" data-u="new">Добавить как новую позицию</button>
+      ${isKeeper() ? `<button class="btn" data-u="bind">Привязать к позиции из справочника</button>
+      <button class="btn sec" data-u="new">Добавить как новую позицию</button>` : '<div class="muted">Этого кода нет в справочнике. Обратитесь к кладовщику.</div>'}
       <button class="btn danger" data-u="cancel">Отмена</button>`);
     o.onclick = e => {
       const b = e.target.closest('[data-u]'); if (!b) return;
@@ -579,12 +582,12 @@
         if (S.screen === 'scan') return S.scanMode === 'bind' ? go('qr') : S.doc && S.doc.lines.length ? go('doc') : go('menu');
         return go('menu');
       case 'start-move': S.setup = { mode: 'move', direction: 'in', zone: '' }; return go('setup');
-      case 'start-inv': S.setup = { mode: 'inventory', zone: '', apply: false }; return go('setup');
+      case 'start-inv': if (!isKeeper()) return; S.setup = { mode: 'inventory', zone: '', apply: false }; return go('setup');
       case 'resume': return go(S.doc.lines.length ? 'doc' : 'scan', { scanMode: 'doc' });
       case 'dir': { S.setup.direction = el.dataset.v; S.setup.zone = $('#f-zone').value; const z2 = $('#f-zone2'); if (z2) S.setup.zoneTo = z2.value; return render(); }
       case 'begin': return beginDoc();
       case 'torch': return toggleTorch();
-      case 'search': pauseScan(); return pickItem('Найти позицию', true, it => lineForm(it), resumeScan);
+      case 'search': pauseScan(); return pickItem('Найти позицию', isKeeper(), it => lineForm(it), resumeScan);
       case 'doc': return go('doc');
       case 'scan-more': return go('scan', { scanMode: 'doc' });
       case 'edit-line': { const l = S.doc.lines[i]; return lineForm(itemBy(l.article) || { article: l.article, name: l.article, unit: '' }, l.qty, i); }
@@ -593,9 +596,9 @@
       case 'send': return sendDoc();
       case 'stock': S.q = ''; S.cat = ''; go('stock'); return loadData().then(() => { if (S.screen === 'stock') render(); }).catch(() => { });
       case 'refresh': return loadData().then(() => { render(); toast('Обновлено'); }).catch(e2 => toast(e2.message, true));
-      case 'qr': S.q = ''; return go('qr');
-      case 'bind': S.bindItem = itemBy(el.dataset.a); return go('scan', { scanMode: 'bind' });
-      case 'print': return printLabels();
+      case 'qr': if (!isKeeper()) return; S.q = ''; return go('qr');
+      case 'bind': if (!isKeeper()) return; S.bindItem = itemBy(el.dataset.a); return go('scan', { scanMode: 'bind' });
+      case 'print': return isKeeper() ? printLabels() : undefined;
       case 'settings': return go('settings');
       case 'q-del': S.queue.splice(i, 1); saveQueue(); return render();
       case 'q-retry': S.queue.forEach(d => { delete d.error; }); saveQueue();
