@@ -21,13 +21,13 @@
   /* ───────── состояние ───────── */
   const cached = LS.get('cache', null) || {};
   const S = {
-    url: CFG_URL || LS.get('url', ''),
+    url: CFG_URL,
     token: LS.get('token', ''), user: LS.get('user', null),
     items: cached.items || [], zones: cached.zones || [], stock: cached.stock || {},
     sheetUrl: cached.sheetUrl || '', synced: cached.synced || 0,
     queue: LS.get('queue', []), label: LS.get('label', { w: 58, h: 40 }),
     screen: 'login', doc: LS.get('draft', null), online: navigator.onLine,
-    scanMode: 'doc', bindItem: null, err: '', q: '', sel: {}, setup: null
+    scanMode: 'doc', bindItem: null, err: '', q: '', sel: {}, setup: null, cat: '', nz: false
   };
   const saveCache = () => LS.set('cache', { items: S.items, zones: S.zones, stock: S.stock, sheetUrl: S.sheetUrl, synced: S.synced });
   const saveQueue = () => LS.set('queue', S.queue);
@@ -38,7 +38,7 @@
 
   /* ───────── сеть ───────── */
   const api = (action, payload) => {
-    if (!S.url) return Promise.reject(new Error('Не указан адрес сервера'));
+    if (!S.url) return Promise.reject(new Error('Адрес сервера не задан в config.js'));
     const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 30000);
     const netErr = msg => Object.assign(new Error(msg), { net: true });
     return fetch(S.url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, token: S.token, ...payload }), signal: ctrl.signal })
@@ -121,7 +121,6 @@
 
   function vLogin() {
     return top('Склад') + `<main><div class="card col"><h2>Вход</h2>
-      ${CFG_URL ? '' : `<label class="f">Адрес сервера (Apps Script)<input id="f-url" type="text" inputmode="url" autocapitalize="off" value="${esc(S.url)}" placeholder="https://script.google.com/macros/s/…/exec"></label>`}
       <label class="f">Логин<input id="f-login" type="text" autocapitalize="off" autocomplete="username"></label>
       <label class="f">Пароль<input id="f-pass" type="password" autocomplete="current-password"></label>
       ${S.err ? `<div class="err">${esc(S.err)}</div>` : ''}
@@ -194,9 +193,16 @@
         <button class="btn danger" data-act="discard">Удалить черновик</button></div></main>`;
   }
 
+  const NO_CAT = '__none';
+  const canOpenSheet = () => !!S.sheetUrl && !!S.user && String(S.user.role).toLowerCase() !== 'повар';
   function vStock() {
     const q = S.q.toLowerCase();
-    const items = S.items.filter(i => matches(i, q)).sort((a, b) => cmp(a.category || 'яяя', b.category || 'яяя') || cmp(a.name, b.name));
+    const cats = [...new Set(S.items.map(i => i.category).filter(Boolean))].sort(cmp);
+    const hasNone = S.items.some(i => !i.category);
+    if (S.cat && S.cat !== NO_CAT && !cats.includes(S.cat)) S.cat = '';
+    const items = S.items.filter(i => matches(i, q)
+      && (!S.cat || (S.cat === NO_CAT ? !i.category : i.category === S.cat))
+      && (!S.nz || Math.abs(stockOf(i.article)) > 0.0004)).sort((a, b) => cmp(a.category || 'яяя', b.category || 'яяя') || cmp(a.name, b.name));
     let html = '', cat = null;
     items.forEach(i => {
       if (i.category !== cat) { cat = i.category; html += `<div class="grp">${esc(cat || 'Без категории')}</div>`; }
@@ -205,8 +211,12 @@
       const tag = s.t < -0.0005 ? '<span class="tag bad">минус</span>' : i.min != null && s.t < i.min ? '<span class="tag warn">ниже мин.</span>' : i.max && s.t > i.max ? '<span class="tag warn">выше макс.</span>' : '';
       html += `<div class="li"><div class="n"><b>${esc(i.name)}</b><span class="muted">${zs || 'нет на складе'}</span></div><div class="q">${fmtQty(s.t)} ${esc(i.unit)}</div>${tag}</div>`;
     });
+    const catOpts = `<option value="">Все категории</option>` + cats.map(c => `<option value="${esc(c)}"${c === S.cat ? ' selected' : ''}>${esc(c)}</option>`).join('')
+      + (hasNone ? `<option value="${NO_CAT}"${S.cat === NO_CAT ? ' selected' : ''}>Без категории</option>` : '');
     return top('Остатки', true) + `<main><input type="search" id="f-q" placeholder="Поиск" value="${esc(S.q)}">
-      <div class="row"><button class="btn sec sm" data-act="refresh">Обновить</button>${S.sheetUrl ? `<a class="btn sec sm" style="text-decoration:none" href="${esc(S.sheetUrl)}" target="_blank" rel="noopener">Google Sheets</a>` : ''}</div>
+      <select id="f-cat" aria-label="Категория">${catOpts}</select>
+      <label class="chk"><input type="checkbox" id="f-nz"${S.nz ? ' checked' : ''}> Только с ненулевым остатком</label>
+      <div class="row"><button class="btn sec sm" data-act="refresh">Обновить</button>${canOpenSheet() ? `<a class="btn sec sm" style="text-decoration:none" href="${esc(S.sheetUrl)}" target="_blank" rel="noopener">Google Sheets</a>` : ''}</div>
       <div class="card"><div class="list">${html || '<div class="muted">Ничего не найдено</div>'}</div></div>
       <div class="muted">Данные на ${S.synced ? fmtDate(S.synced) : '—'}</div></main>`;
   }
@@ -234,7 +244,6 @@
       <div class="card col"><b>Этикетка, мм</b><div class="row">
         <label class="f">Ширина<input type="number" id="f-lw" inputmode="numeric" value="${S.label.w}"></label>
         <label class="f">Высота<input type="number" id="f-lh" inputmode="numeric" value="${S.label.h}"></label></div></div>
-      ${CFG_URL ? '' : `<div class="card"><label class="f">Адрес сервера<input id="f-url" type="text" value="${esc(S.url)}"></label></div>`}
       <div class="muted">Пользователь: ${esc(u ? u.name : '')} (${esc(u ? u.role : '')})</div>
       <button class="btn danger" data-act="logout">Выйти</button></main>`;
   }
@@ -245,7 +254,6 @@
     go('login', { err: expired ? 'Сессия истекла, войдите снова' : '' });
   }
   function doLogin() {
-    const urlEl = $('#f-url'); if (urlEl) { S.url = urlEl.value.trim(); LS.set('url', S.url); }
     const login = $('#f-login').value.trim(), password = $('#f-pass').value;
     if (!login || !password) { S.err = 'Введите логин и пароль'; return render(); }
     const btn = $('[data-act=login]'); btn.disabled = true; btn.textContent = 'Входим…';
@@ -556,7 +564,7 @@
       case 'del-line': S.doc.lines.splice(i, 1); saveDraft(); return render();
       case 'discard': if (confirm('Удалить черновик документа?')) { S.doc = null; saveDraft(); go('menu'); } return;
       case 'send': return sendDoc();
-      case 'stock': S.q = ''; go('stock'); return loadData().then(() => { if (S.screen === 'stock') render(); }).catch(() => { });
+      case 'stock': S.q = ''; S.cat = ''; go('stock'); return loadData().then(() => { if (S.screen === 'stock') render(); }).catch(() => { });
       case 'refresh': return loadData().then(() => { render(); toast('Обновлено'); }).catch(e2 => toast(e2.message, true));
       case 'qr': S.q = ''; return go('qr');
       case 'bind': S.bindItem = itemBy(el.dataset.a); return go('scan', { scanMode: 'bind' });
@@ -573,7 +581,6 @@
     const t = e.target;
     if (t.id === 'f-q') { S.q = t.value; const pos = t.selectionStart; render(); const n = $('#f-q'); n.focus(); n.setSelectionRange(pos, pos); }
     if (t.id === 'f-lw' || t.id === 'f-lh') { S.label = { w: +$('#f-lw').value || 58, h: +$('#f-lh').value || 40 }; LS.set('label', S.label); }
-    if (t.id === 'f-url') { S.url = t.value.trim(); LS.set('url', S.url); }
   });
   document.addEventListener('change', e => {
     const t = e.target;
@@ -583,6 +590,8 @@
       $('#zone-owner').textContent = z && z.owner ? 'Ответственный: ' + z.owner : '';
     }
     if (t.classList.contains('selbox')) S.sel[t.dataset.a] = t.checked;
+    if (t.id === 'f-cat') { S.cat = t.value; render(); }
+    if (t.id === 'f-nz') { S.nz = t.checked; render(); }
   });
   document.addEventListener('submit', e => {
     if (e.target.id !== 'manual') return;
@@ -596,6 +605,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopCamera(); else if (S.screen === 'scan') startCamera(); });
 
   /* ───────── запуск ───────── */
+  LS.del('url'); // адрес сервера больше не хранится на телефоне, только config.js
   if (S.token && S.user) {
     S.screen = 'menu'; render();
     loadData().then(() => { if (S.screen === 'menu') render(); }).catch(e => { if (e.auth) logout(true); });
