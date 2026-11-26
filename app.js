@@ -26,12 +26,15 @@
     token: LS.get('token', ''), user: LS.get('user', null),
     items: cached.items || [], zones: cached.zones || [], stock: cached.stock || {},
     sheetUrl: cached.sheetUrl || '', synced: cached.synced || 0,
-    queue: LS.get('queue', []), label: LS.get('label', { w: 58, h: 40 }),
+    queue: LS.get('queue', []), fbq: LS.get('fbq', []), label: LS.get('label', { w: 58, h: 40 }),
     screen: 'login', doc: LS.get('draft', null), online: navigator.onLine,
     scanMode: 'doc', bindItem: null, err: '', q: '', sel: {}, setup: null, cat: '', nz: false
   };
   const saveCache = () => LS.set('cache', { items: S.items, zones: S.zones, stock: S.stock, sheetUrl: S.sheetUrl, synced: S.synced });
   const saveQueue = () => LS.set('queue', S.queue);
+  const saveFb = () => LS.set('fbq', S.fbq);
+  const FB_KINDS = ['Нет штрих-кода на позицию', 'Ошибка в приложении', 'Ошибка в справочнике или остатках', 'Предложение', 'Другое'];
+  const APP_VER = 'sklad-v8';
   const saveDraft = () => S.doc ? LS.set('draft', S.doc) : LS.del('draft');
   /** Роль: повар (перемещения и остатки), кладовщик (всё, кроме таблицы), админ (всё). Неизвестная роль = повар. */
   const role = () => { const r = String((S.user && S.user.role) || '').toLowerCase(); return r === 'админ' || r === 'кладовщик' ? r : 'повар'; };
@@ -64,9 +67,14 @@
   const syncQueue = () => {
     if (syncing) return syncing;
     const res = { sent: 0, warnings: [], errors: [] };
+    const nextFb = () => {
+      const f = S.fbq[0]; if (!f || !S.token) return Promise.resolve();
+      return api('feedback', f).then(() => { S.fbq.shift(); saveFb(); return nextFb(); })
+        .catch(e => { if (e.auth) { logout(true); return; } if (!e.net) { S.fbq.shift(); saveFb(); return nextFb(); } });
+    };
     const next = () => {
       const d = S.queue.find(x => !x.error);
-      if (!d || !S.token) return Promise.resolve(res);
+      if (!d || !S.token) return nextFb().then(() => res);
       return api('submitDocument', { doc: d }).then(r => {
         S.queue = S.queue.filter(x => x !== d); saveQueue();
         res.sent++; res.warnings.push(...(r.warnings || []));
@@ -89,7 +97,7 @@
     render();
   };
   function render() {
-    app.innerHTML = ({ login: vLogin, menu: vMenu, setup: vSetup, scan: vScan, doc: vDoc, stock: vStock, qr: vQr, settings: vSettings })[S.screen]();
+    app.innerHTML = ({ login: vLogin, menu: vMenu, setup: vSetup, scan: vScan, doc: vDoc, stock: vStock, qr: vQr, settings: vSettings, feedback: vFeedback })[S.screen]();
     renderBadge();
     if (S.screen === 'scan') startCamera();
     window.scrollTo(0, 0);
@@ -139,7 +147,7 @@
       ${isKeeper() ? '<button class="tile t2" data-act="start-inv">Инвентаризация<small>Подсчёт и Excel</small></button>' : ''}
       <button class="tile t3" data-act="stock">Остатки<small>${S.synced ? 'обновлено ' + fmtDate(S.synced) : 'нет данных'}</small></button>
       ${isKeeper() ? '<button class="tile t5" data-act="qr">QR-коды<small>Привязка и печать</small></button>' : ''}
-      <button class="tile t4" data-act="settings">Настройки<small>Очередь${isKeeper() ? ', этикетки' : ''}</small></button></div>
+      <button class="tile t4" data-act="settings">Настройки<small>Очередь${isKeeper() ? ', этикетки' : ''}, обратная связь</small></button></div>
       ${d && (d.mode !== 'inventory' || isKeeper()) ? `<button class="btn sec" data-act="resume">Продолжить черновик: ${d.mode === 'move' ? 'перемещение' : 'инвентаризация'} (${d.lines.length})</button>` : ''}
       ${q ? `<div class="card muted">Неотправленных документов: ${q}. Они уйдут автоматически при появлении связи.</div>` : ''}</main>`;
   }
@@ -250,8 +258,30 @@
       ${isKeeper() ? `<div class="card col"><b>Этикетка, мм</b><div class="row">
         <label class="f">Ширина<input type="number" id="f-lw" inputmode="numeric" value="${S.label.w}"></label>
         <label class="f">Высота<input type="number" id="f-lh" inputmode="numeric" value="${S.label.h}"></label></div></div>` : ''}
+      <div class="card col"><b>Обратная связь</b><span class="muted">Нет штрих-кода, ошибка или идея? Напишите нам.${S.fbq.length ? ` Ожидает отправки: ${S.fbq.length}.` : ''}</span>
+        <button class="btn sec" data-act="feedback">Обратная связь</button></div>
       <div class="muted">Пользователь: ${esc(u ? u.name : '')} (${esc(u ? u.role : '')})</div>
       <button class="btn danger" data-act="logout">Выйти</button></main>`;
+  }
+
+  function vFeedback() {
+    return top('Обратная связь', true) + `<main><div class="card col">
+      <label class="f">Тема<select id="fb-kind">${FB_KINDS.map(k => `<option${k === S.fbKind ? ' selected' : ''}>${esc(k)}</option>`).join('')}</select></label>
+      <label class="f">Сообщение<textarea id="fb-text" rows="6" maxlength="1000" placeholder="Например: нет штрих-кода на «Фарш куриный», артикул 123">${esc(S.fbText || '')}</textarea></label>
+      <button class="btn" data-act="fb-send">Отправить</button></div></main>`;
+  }
+  function sendFeedback() {
+    const text = $('#fb-text').value.trim(), kind = $('#fb-kind').value;
+    S.fbText = text; S.fbKind = kind;
+    if (text.length < 5) return toast('Опишите проблему подробнее', true);
+    const f = { id: uid(), kind, text, ver: APP_VER }, btn = $('[data-act=fb-send]'); btn.disabled = true;
+    api('feedback', f).then(() => { S.fbText = ''; toast('Сообщение отправлено'); go('settings'); })
+      .catch(e => {
+        if (e.auth) return logout(true);
+        if (!e.net) { btn.disabled = false; return toast(e.message, true); }
+        S.fbq.push(f); saveFb(); S.fbText = '';
+        toast('Нет связи: сообщение отправится позже'); go('settings');
+      });
   }
 
   /* ───────── авторизация ───────── */
@@ -688,6 +718,7 @@
     switch (el.dataset.act) {
       case 'login': return doLogin();
       case 'back':
+        if (S.screen === 'feedback') return go('settings');
         if (S.screen === 'doc') return go('scan');
         if (S.screen === 'scan') return S.scanMode === 'bind' ? go('qr') : S.doc && S.doc.lines.length ? go('doc') : go('menu');
         return go('menu');
@@ -711,6 +742,8 @@
       case 'bind': if (!isKeeper()) return; S.bindItem = itemBy(el.dataset.a); return go('scan', { scanMode: 'bind' });
       case 'print': return isKeeper() ? printLabels() : undefined;
       case 'settings': return go('settings');
+      case 'feedback': return go('feedback');
+      case 'fb-send': return sendFeedback();
       case 'q-del': S.queue.splice(i, 1); saveQueue(); return render();
       case 'q-retry': S.queue.forEach(d => { delete d.error; }); saveQueue();
         return syncQueue().then(r => { render(); toast(r.errors.length ? r.errors[0] : S.queue.length ? 'Нет связи' : 'Отправлено', !!r.errors.length); });

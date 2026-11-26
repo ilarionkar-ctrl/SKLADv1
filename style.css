@@ -37,6 +37,8 @@ main{flex:1;padding:16px;display:flex;flex-direction:column;gap:14px;max-width:6
 .tile.t2{background:#6b4a1a;color:#fff}.tile.t3{background:#2f4d6e;color:#fff}.tile.t4{background:#5a5f58;color:#fff}.tile.t5{background:#7a3b5a;color:#fff}
 label.f{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--mute)}
 input[type=text],input[type=password],input[type=search],input[type=number],select{width:100%;min-height:54px;padding:0 14px;border-radius:14px;border:2px solid var(--line);background:var(--card);color:var(--ink);font-size:19px}
+textarea{width:100%;padding:12px 14px;border-radius:14px;border:2px solid var(--line);background:var(--card);color:var(--ink);font:inherit;font-size:17px;resize:vertical}
+textarea:focus{outline:0;border-color:var(--brand)}
 input:focus,select:focus{outline:0;border-color:var(--brand)}
 .seg{display:flex;flex-wrap:wrap;gap:10px}
 .seg button{flex:1;min-height:76px;border-radius:var(--r);border:3px solid var(--line);background:var(--card);font-weight:700;font-size:17px;line-height:1.2;padding:8px}
