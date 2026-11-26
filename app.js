@@ -120,6 +120,7 @@
 
   /* ───────── экраны ───────── */
   const docPills = d => (d.mode === 'move' ? `<span class="pill ${d.direction}">${DIR[d.direction]}</span>` : '<span class="pill">Инвентаризация</span>') + `<span class="pill">${esc(d.direction === 'zone' ? d.zone + ' → ' + d.zoneTo : d.zone)}</span>`;
+  const ctxHtml = d => docPills(d) + (d.mode === 'move' ? '<button class="btn sec sm" data-act="edit-type">Изменить тип</button>' : '');
   const zoneOptions = sel => '<option value="">— выберите —</option>' + S.zones.map(z => `<option value="${esc(z.name)}"${z.name === sel ? ' selected' : ''}>${esc(z.name)}</option>`).join('');
   const expectedInZone = zone => S.items.filter(i => stockOf(i.article, zone) > 0.0004).sort((a, b) => cmp(a.name, b.name));
 
@@ -159,7 +160,7 @@
   function vScan() {
     const d = S.doc, bind = S.scanMode === 'bind';
     return top(bind ? 'Привязка QR' : 'Сканирование', true) + `<main>
-      <div class="ctx">${bind ? `<span class="pill">Привязка QR: ${esc(S.bindItem.name)}</span>` : docPills(d)}</div>
+      <div class="ctx">${bind ? `<span class="pill">Привязка QR: ${esc(S.bindItem.name)}</span>` : ctxHtml(d)}</div>
       <div class="scan"><video id="cam" playsinline muted></video><div class="frame"></div><div class="hint">Наведите камеру на QR-код упаковки</div>
         <button class="torch" id="torch" data-act="torch" hidden>Фонарик</button><div class="none" id="cam-none" hidden></div></div>
       <form id="manual" class="row" style="gap:8px"><input type="text" id="f-code" placeholder="Код вручную" autocapitalize="off" autocomplete="off"><button class="btn sm" style="flex:none;width:auto">OK</button></form>
@@ -190,7 +191,7 @@
         <span class="muted">Посчитано ${done} из ${exp.length} позиций по учёту</span>
         ${left.length ? `<details><summary class="muted">Не посчитано (${left.length})</summary>${left.map(i => `<div class="li"><div class="n">${esc(i.name)}</div><span class="muted">${fmtQty(stockOf(i.article, d.zone))} ${esc(i.unit)}</span></div>`).join('')}</details>` : ''}</div>`;
     }
-    return top('Документ', true) + `<main><div class="ctx">${docPills(d)}</div>${prog}
+    return top('Документ', true) + `<main><div class="ctx">${ctxHtml(d)}</div>${prog}
       <div class="card"><div class="list">${list}</div></div>
       <div class="card"><b>Итого:</b> ${totalsByUnit(d.lines)}</div>
       <div class="sticky"><button class="btn sec" data-act="scan-more">Сканировать ещё</button>
@@ -286,8 +287,14 @@
       cam.stream = stream; video.srcObject = stream;
       const track = stream.getVideoTracks()[0], caps = track.getCapabilities ? track.getCapabilities() : {};
       if (caps.torch) $('#torch').hidden = false;
+      video.muted = true; // iOS: автозапуск видео только без звука
       return video.play().then(() => {
-        if (!('BarcodeDetector' in window)) return noCam('Этот браузер не умеет читать QR. Откройте приложение в Chrome на Android или вводите код вручную.');
+        if (!('BarcodeDetector' in window)) { // iPhone/iPad и другие браузеры без BarcodeDetector: запасной распознаватель
+          return loadFallbackLibs().then(() => {
+            if (S.screen !== 'scan' || !cam.stream) return;
+            cam.det = fallbackDetector(); cam.run = true; tick();
+          }).catch(() => noCam('Сканирование на этом устройстве недоступно. Введите код вручную.'));
+        }
         const want = ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a'];
         return (BarcodeDetector.getSupportedFormats ? BarcodeDetector.getSupportedFormats() : Promise.resolve(want)).then(sup => {
           cam.det = new BarcodeDetector({ formats: want.filter(f => sup.includes(f)) });
@@ -295,6 +302,72 @@
         });
       });
     }).catch(e => noCam(e && e.name === 'NotAllowedError' ? 'Нет доступа к камере. Разрешите камеру в настройках сайта или введите код вручную.' : 'Не удалось запустить камеру. Введите код вручную.'));
+  }
+  /* Запасной распознаватель для браузеров без BarcodeDetector (iPhone, iPad). Библиотеки подгружаются из vendor/:
+     zxing.min.js (ZXing: штрихкоды и QR) и jsQR.js (резерв для QR). Достаточно любой одной из них. */
+  const libLoading = {};
+  const loadLib = (global, src) => window[global] ? Promise.resolve() : (libLoading[src] = libLoading[src] || new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok; s.onerror = () => { libLoading[src] = null; fail(new Error(src)); };
+    document.head.appendChild(s);
+  }));
+  /** Готово, как только загрузилась любая из библиотек; ошибка — только если не загрузилась ни одна. */
+  const loadFallbackLibs = () => new Promise((ok, fail) => {
+    let left = 2;
+    const done = good => { if (good) ok(); else if (--left === 0) fail(new Error('no libs')); };
+    loadLib('ZXing', 'vendor/zxing.min.js').then(() => done(true), () => done(false));
+    loadLib('jsQR', 'vendor/jsQR.js').then(() => done(true), () => done(false));
+  });
+
+  /** Серый кадр (яркость пикселей) для ZXing. */
+  const toGray = rgba => {
+    const n = rgba.length >> 2, out = new Uint8ClampedArray(n);
+    for (let i = 0, j = 0; i < n; i++, j += 4) out[i] = (rgba[j] * 299 + rgba[j + 1] * 587 + rgba[j + 2] * 114) / 1000;
+    return out;
+  };
+  /**
+   * Читает только центр кадра, чтобы брался код, на который наведена рамка, а не соседние.
+   * ZXing смотрит на широкую центральную полосу (для штрихкодов), jsQR — на центральный квадрат (для QR).
+   */
+  function fallbackDetector() {
+    const cv = document.createElement('canvas'), g = cv.getContext('2d', { willReadFrequently: true });
+    let hints = null;
+    const getHints = () => { // ZXing может догрузиться после старта камеры
+      if (!hints && window.ZXing) {
+        const Z = window.ZXing, F = Z.BarcodeFormat;
+        hints = new Map();
+        hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [F.QR_CODE, F.EAN_13, F.EAN_8, F.UPC_A, F.CODE_128, F.CODE_39]);
+        hints.set(Z.DecodeHintType.TRY_HARDER, true);
+      }
+      return hints;
+    };
+    const crop = (video, sx, sy, sw, sh, ow, oh) => {
+      cv.width = ow; cv.height = oh;
+      g.drawImage(video, sx, sy, sw, sh, 0, 0, ow, oh);
+      return g.getImageData(0, 0, ow, oh);
+    };
+    return {
+      detect: video => {
+        const vw = video.videoWidth, vh = video.videoHeight; let text = null;
+        const hs = getHints();
+        if (hs) {
+          const Z = window.ZXing, cw = Math.floor(vw * 0.9), ch = Math.floor(Math.min(vh * 0.5, cw * 0.75)), k = Math.min(1, 800 / cw);
+          const ow = Math.floor(cw * k), oh = Math.floor(ch * k);
+          const img = crop(video, Math.floor((vw - cw) / 2), Math.floor((vh - ch) / 2), cw, ch, ow, oh);
+          try {
+            const bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.RGBLuminanceSource(toGray(img.data), ow, oh)));
+            text = new Z.MultiFormatReader().decode(bmp, hs).getText();
+          } catch (e) { /* код не найден в этом кадре */ }
+        }
+        if (!text && window.jsQR) {
+          const side = Math.floor(Math.min(vw, vh) * 0.7), out = Math.min(side, 480);
+          const img = crop(video, Math.floor((vw - side) / 2), Math.floor((vh - side) / 2), side, side, out, out);
+          const r = window.jsQR(img.data, out, out, { inversionAttempts: 'dontInvert' });
+          text = r && r.data;
+        }
+        return Promise.resolve(text ? [{ rawValue: text, boundingBox: { x: vw / 2, y: vh / 2, width: 0, height: 0 } }] : []);
+      }
+    };
   }
   /** Из нескольких кодов в кадре берёт тот, чей центр ближе всего к центру рамки. */
   function pickCentral(codes, video) {
@@ -523,6 +596,43 @@
     });
   }
 
+  /** Смена типа перемещения (и ларей) прямо в заполняемом документе; позиции сохраняются. */
+  function editType() {
+    const d = S.doc; if (!d || d.mode !== 'move') return;
+    pauseScan();
+    const ed = { direction: d.direction, zone: d.zone, zoneTo: d.zoneTo || '' };
+    const sync = () => { const a = $('#e-zone'), b = $('#e-zone2'); if (a) ed.zone = a.value; if (b) ed.zoneTo = b.value; };
+    const done = changed => {
+      closeOverlay();
+      if (S.screen === 'doc') return render();
+      const c = $('.ctx'); if (c && changed) c.innerHTML = ctxHtml(d);
+      resumeScan();
+    };
+    const draw = err => {
+      const dir = ed.direction;
+      const o = overlay(`<h2>Тип перемещения</h2>
+        <div class="seg"><button class="in${dir === 'in' ? ' on' : ''}" data-e="in">Производство<br>→ Склад</button><button class="out${dir === 'out' ? ' on' : ''}" data-e="out">Склад<br>→ Производство</button><button class="zone zn${dir === 'zone' ? ' on' : ''}" data-e="zone">Между ларями</button></div>
+        <label class="f">${dir === 'zone' ? 'Из ларя (откуда)' : 'Место хранения на складе'}<select id="e-zone">${zoneOptions(ed.zone)}</select></label>
+        ${dir === 'zone' ? `<label class="f">В ларь (куда)<select id="e-zone2">${zoneOptions(ed.zoneTo)}</select></label>` : ''}
+        <div class="muted">Уже добавленные позиции (${d.lines.length}) сохранятся.</div>
+        <div class="err">${esc(err || '')}</div>
+        <button class="btn" data-e="save">Применить</button><button class="btn danger" data-e="cancel">Отмена</button>`);
+      o.onclick = e => {
+        const b = e.target.closest('[data-e]'); if (!b) return;
+        const v = b.dataset.e; sync();
+        if (v === 'cancel') return done(false);
+        if (v !== 'save') { ed.direction = v; return draw(); }
+        const tr = ed.direction === 'zone';
+        if (!ed.zone) return draw(tr ? 'Выберите ларь, откуда перемещаем' : 'Выберите место хранения');
+        if (tr && !ed.zoneTo) return draw('Выберите ларь, куда перемещаем');
+        if (tr && ed.zoneTo === ed.zone) return draw('Ларь-источник и ларь-получатель должны различаться');
+        Object.assign(d, { direction: ed.direction, zone: ed.zone, zoneTo: tr ? ed.zoneTo : '' });
+        saveDraft(); done(true);
+      };
+    };
+    draw();
+  }
+
   function beginDoc() {
     const st = S.setup, ap = $('#f-apply');
     st.zone = $('#f-zone').value; if (ap) st.apply = ap.checked;
@@ -589,6 +699,7 @@
       case 'torch': return toggleTorch();
       case 'search': pauseScan(); return pickItem('Найти позицию', isKeeper(), it => lineForm(it), resumeScan);
       case 'doc': return go('doc');
+      case 'edit-type': return editType();
       case 'scan-more': return go('scan', { scanMode: 'doc' });
       case 'edit-line': { const l = S.doc.lines[i]; return lineForm(itemBy(l.article) || { article: l.article, name: l.article, unit: '' }, l.qty, i); }
       case 'del-line': S.doc.lines.splice(i, 1); saveDraft(); return render();
@@ -637,6 +748,7 @@
 
   /* ───────── запуск ───────── */
   LS.del('url'); // адрес сервера больше не хранится на телефоне, только config.js
+  if (!('BarcodeDetector' in window)) loadFallbackLibs().catch(() => { }); // заранее, чтобы библиотеки попали в кэш и работали офлайн
   if (S.token && S.user) {
     S.screen = 'menu'; render();
     loadData().then(() => { if (S.screen === 'menu') render(); }).catch(e => { if (e.auth) logout(true); });
