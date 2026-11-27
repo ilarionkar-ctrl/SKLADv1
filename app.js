@@ -215,20 +215,28 @@
     const cats = [...new Set(S.items.map(i => i.category).filter(Boolean))].sort(cmp);
     const hasNone = S.items.some(i => !i.category);
     if (S.cat && S.cat !== NO_CAT && !cats.includes(S.cat)) S.cat = '';
-    const items = S.items.filter(i => matches(i, q)
+    const zones = [...new Set([...S.zones.map(z => z.name), ...Object.values(S.stock).flatMap(s => Object.keys(s.z))])].sort(cmp);
+    if (S.zone && !zones.includes(S.zone)) S.zone = '';
+    const inZone = a => ((S.stock[a] || { z: {} }).z[S.zone] || 0);
+    const zoneHit = i => Object.keys((S.stock[i.article] || { z: {} }).z).some(z => z.toLowerCase().includes(q));
+    const items = S.items.filter(i => (matches(i, q) || (q && zoneHit(i)))
+      && (!S.zone || Math.abs(inZone(i.article)) > 0.0004)
       && (!S.cat || (S.cat === NO_CAT ? !i.category : i.category === S.cat))
       && (!S.nz || Math.abs(stockOf(i.article)) > 0.0004)).sort((a, b) => cmp(a.category || 'яяя', b.category || 'яяя') || cmp(a.name, b.name));
     let html = '', cat = null;
     items.forEach(i => {
       if (i.category !== cat) { cat = i.category; html += `<div class="grp">${esc(cat || 'Без категории')}</div>`; }
       const s = S.stock[i.article] || { t: 0, z: {} };
-      const zs = Object.keys(s.z).sort(cmp).map(z => `${esc(z)}: ${fmtQty(s.z[z])}`).join(' · ');
-      const tag = s.t < -0.0005 ? '<span class="tag bad">минус</span>' : i.min != null && s.t < i.min ? '<span class="tag warn">ниже мин.</span>' : i.max && s.t > i.max ? '<span class="tag warn">выше макс.</span>' : '';
-      html += `<div class="li"><div class="n"><b>${esc(i.name)}</b><span class="muted">${zs || 'нет на складе'}</span></div><div class="q">${fmtQty(s.t)} ${esc(i.unit)}</div>${tag}</div>`;
+      const zs = Object.keys(s.z).filter(z => !S.zone || z === S.zone).sort(cmp).map(z => `${esc(z)}: ${fmtQty(s.z[z])}`).join(' · ');
+      const shown = S.zone ? inZone(i.article) : s.t;
+      const tag = S.zone ? (shown < -0.0005 ? '<span class="tag bad">минус</span>' : '') : s.t < -0.0005 ? '<span class="tag bad">минус</span>' : i.min != null && s.t < i.min ? '<span class="tag warn">ниже мин.</span>' : i.max && s.t > i.max ? '<span class="tag warn">выше макс.</span>' : '';
+      html += `<div class="li"><div class="n"><b>${esc(i.name)}</b><span class="muted">${zs || 'нет на складе'}</span></div><div class="q">${fmtQty(shown)} ${esc(i.unit)}</div>${tag}</div>`;
     });
     const catOpts = `<option value="">Все категории</option>` + cats.map(c => `<option value="${esc(c)}"${c === S.cat ? ' selected' : ''}>${esc(c)}</option>`).join('')
       + (hasNone ? `<option value="${NO_CAT}"${S.cat === NO_CAT ? ' selected' : ''}>Без категории</option>` : '');
-    return top('Остатки', true) + `<main><input type="search" id="f-q" placeholder="Поиск" value="${esc(S.q)}">
+    const zoneOpts = `<option value="">Все места хранения</option>` + zones.map(z => `<option value="${esc(z)}"${z === S.zone ? ' selected' : ''}>${esc(z)}</option>`).join('');
+    return top('Остатки', true) + `<main><input type="search" id="f-q" placeholder="Поиск по названию, артикулу, месту" value="${esc(S.q)}">
+      <select id="f-zone-f" aria-label="Место хранения">${zoneOpts}</select>
       <select id="f-cat" aria-label="Категория">${catOpts}</select>
       <label class="chk"><input type="checkbox" id="f-nz"${S.nz ? ' checked' : ''}> Только с ненулевым остатком</label>
       <div class="row"><button class="btn sec sm" data-act="refresh">Обновить</button>${canOpenSheet() ? `<a class="btn sec sm" style="text-decoration:none" href="${esc(S.sheetUrl)}" target="_blank" rel="noopener">Google Sheets</a>` : ''}</div>
@@ -737,7 +745,7 @@
       case 'del-line': S.doc.lines.splice(i, 1); saveDraft(); return render();
       case 'discard': if (confirm('Удалить черновик документа?')) { S.doc = null; saveDraft(); go('menu'); } return;
       case 'send': return sendDoc();
-      case 'stock': S.q = ''; S.cat = ''; go('stock'); return loadData().then(() => { if (S.screen === 'stock') render(); }).catch(() => { });
+      case 'stock': S.q = ''; S.cat = ''; S.zone = ''; go('stock'); return loadData().then(() => { if (S.screen === 'stock') render(); }).catch(() => { });
       case 'refresh': return loadData().then(() => { render(); toast('Обновлено'); }).catch(e2 => toast(e2.message, true));
       case 'qr': if (!isKeeper()) return; S.q = ''; return go('qr');
       case 'bind': if (!isKeeper()) return; S.bindItem = itemBy(el.dataset.a); return go('scan', { scanMode: 'bind' });
@@ -767,6 +775,7 @@
     if (t.classList.contains('selbox')) S.sel[t.dataset.a] = t.checked;
     if (t.id === 'f-zone2') S.setup.zoneTo = t.value;
     if (t.id === 'f-cat') { S.cat = t.value; render(); }
+    if (t.id === 'f-zone-f') { S.zone = t.value; render(); }
     if (t.id === 'f-nz') { S.nz = t.checked; render(); }
   });
   document.addEventListener('submit', e => {
