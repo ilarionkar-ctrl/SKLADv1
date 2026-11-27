@@ -147,7 +147,8 @@
       ${isKeeper() ? '<button class="tile t2" data-act="start-inv">Инвентаризация<small>Подсчёт и Excel</small></button>' : ''}
       <button class="tile t3" data-act="stock">Остатки<small>${S.synced ? 'обновлено ' + fmtDate(S.synced) : 'нет данных'}</small></button>
       ${isKeeper() ? '<button class="tile t5" data-act="qr">QR-коды<small>Привязка и печать</small></button>' : ''}
-      <button class="tile t4" data-act="settings">Настройки<small>Очередь${isKeeper() ? ', этикетки' : ''}, обратная связь</small></button></div>
+      <button class="tile t4" data-act="settings">Настройки<small>Очередь${isKeeper() ? ', этикетки' : ''}</small></button>
+      <button class="tile t6" data-act="feedback">Обратная связь<small>Нет штрих-кода или ошибка? Напишите нам</small></button></div>
       ${d && (d.mode !== 'inventory' || isKeeper()) ? `<button class="btn sec" data-act="resume">Продолжить черновик: ${d.mode === 'move' ? 'перемещение' : 'инвентаризация'} (${d.lines.length})</button>` : ''}
       ${q ? `<div class="card muted">Неотправленных документов: ${q}. Они уйдут автоматически при появлении связи.</div>` : ''}</main>`;
   }
